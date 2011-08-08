@@ -1,0 +1,38 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 10.00
+# Visual C++ Express 2008
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "cschannel", "code\cschannel.vcproj", "{26AADABD-5983-4A2D-8599-9E45163D6E99}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "cstyle-demo", "test\cstyle-demo.vcproj", "{CF1C0A40-A56E-4D26-B0A5-1749BF7C82E4}"
+	ProjectSection(ProjectDependencies) = postProject
+		{26AADABD-5983-4A2D-8599-9E45163D6E99} = {26AADABD-5983-4A2D-8599-9E45163D6E99}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "cxxstyle-demo", "test\cxxstyle-demo.vcproj", "{7F348D79-A182-45A3-BEC7-9A950A2E4D8E}"
+	ProjectSection(ProjectDependencies) = postProject
+		{26AADABD-5983-4A2D-8599-9E45163D6E99} = {26AADABD-5983-4A2D-8599-9E45163D6E99}
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Win32 = Debug|Win32
+		Release|Win32 = Release|Win32
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{26AADABD-5983-4A2D-8599-9E45163D6E99}.Debug|Win32.ActiveCfg = Debug|Win32
+		{26AADABD-5983-4A2D-8599-9E45163D6E99}.Debug|Win32.Build.0 = Debug|Win32
+		{26AADABD-5983-4A2D-8599-9E45163D6E99}.Release|Win32.ActiveCfg = Release|Win32
+		{26AADABD-5983-4A2D-8599-9E45163D6E99}.Release|Win32.Build.0 = Release|Win32
+		{CF1C0A40-A56E-4D26-B0A5-1749BF7C82E4}.Debug|Win32.ActiveCfg = Debug|Win32
+		{CF1C0A40-A56E-4D26-B0A5-1749BF7C82E4}.Debug|Win32.Build.0 = Debug|Win32
+		{CF1C0A40-A56E-4D26-B0A5-1749BF7C82E4}.Release|Win32.ActiveCfg = Release|Win32
+		{CF1C0A40-A56E-4D26-B0A5-1749BF7C82E4}.Release|Win32.Build.0 = Release|Win32
+		{7F348D79-A182-45A3-BEC7-9A950A2E4D8E}.Debug|Win32.ActiveCfg = Debug|Win32
+		{7F348D79-A182-45A3-BEC7-9A950A2E4D8E}.Debug|Win32.Build.0 = Debug|Win32
+		{7F348D79-A182-45A3-BEC7-9A950A2E4D8E}.Release|Win32.ActiveCfg = Release|Win32
+		{7F348D79-A182-45A3-BEC7-9A950A2E4D8E}.Release|Win32.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

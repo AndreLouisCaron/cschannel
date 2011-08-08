@@ -1,0 +1,10 @@
+# git-ls-files --others --exclude-from=.git/info/exclude
+
+  # output folders.
+help/
+data/
+
+  # temporary visual studio project files.
+*.suo
+*.ncb
+*.vcproj.*.user
