@@ -91,6 +91,17 @@
  * code of interesting events and to submit data for transfer or processing.
  */
 
+/*
+** PROTOTYPES.
+*/
+
+static void secure_channel_decrypt
+    ( struct secure_channel * channel, PSecBufferDesc buffer );
+static void prepare_dmbuffer ( struct secure_channel * channel );
+static void prepare_embuffer ( struct secure_channel * channel );
+static void reset_itoken_buffers ( struct secure_channel * channel );
+static void reset_otoken_buffers ( struct secure_channel * channel );
+
 /*!
  * @brief Security package name.
  *
@@ -108,13 +119,33 @@ static size_t channel_min ( size_t lhs, size_t rhs )
     return (lhs < rhs)? lhs : rhs;
 }
 
+static void * poffset1 ( void * data, size_t size )
+{
+    return (((char*)data)+size);
+}
+
+static const void * poffset2 ( const void * data, size_t size )
+{
+    return (((const char*)data)+size);
+}
+
+#if 0
+static size_t channel_copy ( void * ldata, size_t loff, size_t lsize,
+                             const void * rdata, size_t rsize )
+{
+    const size_t size = channel_min(lsize-loff, rsize-roff);
+    memcpy(poffset1(ldata,loff), poffset2(rdata,roff), size); 
+    return (size);
+}
+#endif
+
 /*!
  * @brief Copy data into security buffer.
  *
  * @ingroup internal
  */
 static size_t channel_copy ( PSecBuffer buffer, size_t full,
-                             const void * data, size_t size )
+                               const void * data, size_t size )
 {
       /* fill to capacity. */
     const size_t used = channel_min(size, full-(buffer->cbBuffer));
@@ -123,6 +154,18 @@ static size_t channel_copy ( PSecBuffer buffer, size_t full,
     buffer->cbBuffer += used;
     return (used);
 }
+
+#if 0
+static size_t channel_splice ( PSecBuffer lhs, PSecBuffer rhs, size_t max_size )
+{
+      /* fill to capacity. */
+    const size_t used = channel_copy(
+        lhs->pvBuffer, lhs->cbBuffer, rhs->pvBuffer, rhs->cbBuffer, max_size);
+    lhs->cbBuffer += used;
+    rhs->cbBuffer -= used;
+    return (used);
+}
+#endif
 
 /*!
  * @brief String representation of @c secure_channel_role, for display.
@@ -189,8 +232,8 @@ static void channel_release ( struct secure_channel * channel, void * data )
  */
 static void acquire_token_buffers ( struct secure_channel * channel )
 {
-    channel->ptokens = channel_acquire(channel, channel->token_size);
-    channel->gtokens = channel_acquire(channel, channel->token_size);
+    channel->itoken = channel_acquire(channel, channel->token_size);
+    channel->otoken = channel_acquire(channel, channel->token_size);
 }
 
 /*!
@@ -202,8 +245,9 @@ static void acquire_token_buffers ( struct secure_channel * channel )
  */
 static void release_token_buffers ( struct secure_channel * channel )
 {
-    channel_release(channel, channel->gtokens); channel->gtokens=0;
-    channel_release(channel, channel->ptokens); channel->ptokens=0;
+    channel_release(channel, channel->itoken), channel->otoken=0;
+    channel_release(channel, channel->otoken), channel->otoken=0;
+    memset(channel->buffers+0, 0, 4*sizeof(SecBuffer));
 }
 
 /*!
@@ -217,10 +261,12 @@ static void release_token_buffers ( struct secure_channel * channel )
  */
 static void acquire_stream_buffers ( struct secure_channel * channel )
 {
-    channel->pheader = channel_acquire(channel, channel->header_size);
-    channel->pstream = channel_acquire(channel, channel->stream_size);
-    channel->pfooter = channel_acquire(channel, channel->footer_size);
-    channel->gstream = channel_acquire(channel, channel->stream_size);
+    channel->emheader = channel_acquire(channel, channel->header_size);
+    channel->emstream = channel_acquire(channel, channel->stream_size);
+    channel->emfooter = channel_acquire(channel, channel->footer_size);
+    channel->dmstream = channel_acquire(channel, channel->stream_size);
+    prepare_embuffer(channel);
+    prepare_dmbuffer(channel);
 }
 
 /*!
@@ -232,30 +278,11 @@ static void acquire_stream_buffers ( struct secure_channel * channel )
  */
 static void release_stream_buffers ( struct secure_channel * channel )
 {
-    channel_release(channel, channel->pheader); channel->pheader=0;
-    channel_release(channel, channel->pstream); channel->pstream=0;
-    channel_release(channel, channel->pfooter); channel->pfooter=0;
-    channel_release(channel, channel->gstream); channel->gstream=0;
-}
-
-/*!
- * @brief Empty all buffers (mark as empty, clear pointers).
- *
- * @ingroup buffers
- *
- * @note This function does @e not release allocated memory.
- */
-static void nullify_buffers ( struct secure_channel * channel )
-{
-    ULONG i;
-    for ( i = 0; (i < 8); ++i )
-    {
-        channel->buffers[i].BufferType = SECBUFFER_EMPTY;
-        channel->buffers[i].cbBuffer = 0;
-        channel->buffers[i].pvBuffer = 0;
-    }
-    channel->gbuffer.cBuffers = 0;
-    channel->pbuffer.cBuffers = 0;
+    channel_release(channel, channel->emheader); channel->emheader=0;
+    channel_release(channel, channel->emstream); channel->emstream=0;
+    channel_release(channel, channel->emfooter); channel->emfooter=0;
+    channel_release(channel, channel->dmstream); channel->dmstream=0;
+    memset(channel->buffers+4, 0, 8*sizeof(SecBuffer));
 }
 
 /*!
@@ -271,15 +298,19 @@ static void nullify_buffers ( struct secure_channel * channel )
  *
  * @note This function does @e not allocate allocated memory.
  */
-static void prepare_gtoken ( struct secure_channel * channel )
+static void prepare_itbuffer ( struct secure_channel * channel )
 {
-    channel->gbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
-    channel->gbuffer.pBuffers[0].cbBuffer = channel->token_size;
-    channel->gbuffer.pBuffers[0].pvBuffer = channel->gtokens;
-    channel->gbuffer.pBuffers[1].BufferType = SECBUFFER_EMPTY;
-    channel->gbuffer.pBuffers[1].cbBuffer = 0;
-    channel->gbuffer.pBuffers[1].pvBuffer = 0;
-    channel->gbuffer.cBuffers = 2;
+    // 1st buffer contains in-bound token data.
+    // 2nd buffer contains ?
+    channel->itbuffer.ulVersion = SECBUFFER_VERSION;
+    channel->itbuffer.pBuffers = channel->buffers+0;
+    channel->itbuffer.cBuffers = 2;
+    channel->itbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
+    channel->itbuffer.pBuffers[0].cbBuffer   = 0;
+    channel->itbuffer.pBuffers[0].pvBuffer   = channel->itoken;
+    channel->itbuffer.pBuffers[1].BufferType = SECBUFFER_EMPTY;
+    channel->itbuffer.pBuffers[1].cbBuffer   = 0;
+    channel->itbuffer.pBuffers[1].pvBuffer   = 0;
 }
 
 /*!
@@ -298,49 +329,80 @@ static void prepare_gtoken ( struct secure_channel * channel )
  *
  * @note This function does @e not allocate allocated memory.
  */
-static void prepare_ptoken ( struct secure_channel * channel )
+static void prepare_otbuffer ( struct secure_channel * channel )
 {
-    channel->pbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
-    channel->pbuffer.pBuffers[0].cbBuffer = 0;
-    channel->pbuffer.pBuffers[0].pvBuffer = channel->ptokens;
-    channel->pbuffer.pBuffers[1].BufferType = SECBUFFER_EMPTY;
-    channel->pbuffer.pBuffers[1].cbBuffer = 0;
-    channel->pbuffer.pBuffers[1].pvBuffer = 0;
-    channel->pbuffer.cBuffers = 2;
+    // 1st buffer contains out-bound token data.
+    // 2nd buffer contains in-bound unused data (start of 1st message).
+    channel->otbuffer.ulVersion = SECBUFFER_VERSION;
+    channel->otbuffer.pBuffers = channel->buffers+2;
+    channel->otbuffer.cBuffers = 2;
+    channel->otbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
+    channel->otbuffer.pBuffers[0].cbBuffer   = channel->token_size;
+    channel->otbuffer.pBuffers[0].pvBuffer   = channel->otoken;
+    channel->otbuffer.pBuffers[1].BufferType = SECBUFFER_EMPTY;
+    channel->otbuffer.pBuffers[1].cbBuffer   = 0;
+    channel->otbuffer.pBuffers[1].pvBuffer   = 0;
 }
 
-static void reset_gstream_buffers ( struct secure_channel * channel )
+/*!
+ * @brief Prepare buffers for production of control token.
+ *
+ * @ingroup buffers
+ */
+static void prepare_ctbuffers ( struct secure_channel * channel )
 {
-    channel->pbuffer.pBuffers[0].BufferType = SECBUFFER_STREAM_HEADER;
-    channel->pbuffer.pBuffers[0].cbBuffer = channel->header_size;
-    channel->pbuffer.pBuffers[0].pvBuffer = channel->pheader;
-    channel->pbuffer.pBuffers[1].BufferType = SECBUFFER_DATA;
-    channel->pbuffer.pBuffers[1].cbBuffer = 0;
-    channel->pbuffer.pBuffers[1].pvBuffer = channel->pstream;
-    channel->pbuffer.pBuffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
-    channel->pbuffer.pBuffers[2].cbBuffer = channel->footer_size;
-    channel->pbuffer.pBuffers[2].pvBuffer = channel->pfooter;
-    channel->pbuffer.pBuffers[3].BufferType = SECBUFFER_EMPTY;
-    channel->pbuffer.pBuffers[3].cbBuffer = 0;
-    channel->pbuffer.pBuffers[3].pvBuffer = 0;
-    channel->pbuffer.cBuffers = 4;
+    // if used, must be empty.
+    channel->itbuffer.ulVersion = SECBUFFER_VERSION;
+    channel->itbuffer.pBuffers = channel->buffers+0;
+    channel->itbuffer.cBuffers = 1;
+    channel->itbuffer.pBuffers[0].BufferType = SECBUFFER_EMPTY;
+    channel->itbuffer.pBuffers[0].cbBuffer   = 0;
+    channel->itbuffer.pBuffers[0].pvBuffer   = 0;
+    // single buffer set to alert token.
+    channel->otbuffer.ulVersion = SECBUFFER_VERSION;
+    channel->otbuffer.pBuffers = channel->buffers+2;
+    channel->otbuffer.cBuffers = 1;
+    channel->otbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
+    channel->otbuffer.pBuffers[0].cbBuffer   = channel->token_size;
+    channel->otbuffer.pBuffers[0].pvBuffer   = channel->otoken;
 }
 
-static void reset_pstream_buffers ( struct secure_channel * channel )
+static void prepare_dmbuffer ( struct secure_channel * channel )
 {
-    channel->gbuffer.pBuffers[0].BufferType = SECBUFFER_DATA;
-    channel->gbuffer.pBuffers[0].cbBuffer = 0;
-    channel->gbuffer.pBuffers[0].pvBuffer = channel->gstream;
-    channel->gbuffer.pBuffers[1].BufferType = SECBUFFER_EMPTY;
-    channel->gbuffer.pBuffers[1].cbBuffer = 0;
-    channel->gbuffer.pBuffers[1].pvBuffer = 0;
-    channel->gbuffer.pBuffers[2].BufferType = SECBUFFER_EMPTY;
-    channel->gbuffer.pBuffers[2].cbBuffer = 0;
-    channel->gbuffer.pBuffers[2].pvBuffer = 0;
-    channel->gbuffer.pBuffers[3].BufferType = SECBUFFER_EMPTY;
-    channel->gbuffer.pBuffers[3].cbBuffer = 0;
-    channel->gbuffer.pBuffers[3].pvBuffer = 0;
-    channel->gbuffer.cBuffers = 4;
+    channel->dmbuffer.ulVersion = SECBUFFER_VERSION;
+    channel->dmbuffer.pBuffers = channel->buffers+4;
+    channel->dmbuffer.cBuffers = 4;
+    channel->dmbuffer.pBuffers[0].BufferType = SECBUFFER_DATA;
+    channel->dmbuffer.pBuffers[0].cbBuffer   = 0;
+    channel->dmbuffer.pBuffers[0].pvBuffer   = channel->dmstream;
+    channel->dmbuffer.pBuffers[1].BufferType = SECBUFFER_EMPTY;
+    channel->dmbuffer.pBuffers[1].cbBuffer   = 0;
+    channel->dmbuffer.pBuffers[1].pvBuffer   = 0;
+    channel->dmbuffer.pBuffers[2].BufferType = SECBUFFER_EMPTY;
+    channel->dmbuffer.pBuffers[2].cbBuffer   = 0;
+    channel->dmbuffer.pBuffers[2].pvBuffer   = 0;
+    channel->dmbuffer.pBuffers[3].BufferType = SECBUFFER_EMPTY;
+    channel->dmbuffer.pBuffers[3].cbBuffer   = 0;
+    channel->dmbuffer.pBuffers[3].pvBuffer   = 0;
+}
+
+static void prepare_embuffer ( struct secure_channel * channel )
+{
+    channel->embuffer.ulVersion = SECBUFFER_VERSION;
+    channel->embuffer.pBuffers = channel->buffers+8;
+    channel->embuffer.cBuffers = 4;
+    channel->embuffer.pBuffers[0].BufferType = SECBUFFER_STREAM_HEADER;
+    channel->embuffer.pBuffers[0].cbBuffer   = channel->header_size;
+    channel->embuffer.pBuffers[0].pvBuffer   = channel->emheader;
+    channel->embuffer.pBuffers[1].BufferType = SECBUFFER_DATA;
+    channel->embuffer.pBuffers[1].cbBuffer   = 0;
+    channel->embuffer.pBuffers[1].pvBuffer   = channel->emstream;
+    channel->embuffer.pBuffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
+    channel->embuffer.pBuffers[2].cbBuffer   = channel->footer_size;
+    channel->embuffer.pBuffers[2].pvBuffer   = channel->emfooter;
+    channel->embuffer.pBuffers[3].BufferType = SECBUFFER_EMPTY;
+    channel->embuffer.pBuffers[3].cbBuffer   = 0;
+    channel->embuffer.pBuffers[3].pvBuffer   = 0;
 }
 
 /*!
@@ -351,13 +413,21 @@ static void reset_pstream_buffers ( struct secure_channel * channel )
 static void accept_token ( struct secure_channel * channel )
 {
     ULONG i;
-    for ( i = 0; (i < channel->gbuffer.cBuffers); ++i )
+    for ( i = 0; (i < channel->otbuffer.cBuffers); ++i )
     {
-        PSecBuffer buffer = &channel->gbuffer.pBuffers[i];
-        if ( buffer->BufferType != SECBUFFER_EMPTY )
+        PSecBuffer buffer = &channel->otbuffer.pBuffers[i];
+        if ( buffer->BufferType == SECBUFFER_TOKEN )
         {
               /* forward data. */
             channel->accept_encrypted(channel,
+                buffer->pvBuffer, buffer->cbBuffer);
+              /* expire token. */
+            buffer->cbBuffer = 0;
+        }
+        if ( buffer->BufferType == SECBUFFER_EXTRA )
+        {
+              /* forward data. */
+            channel->accept_overflow(channel,
                 buffer->pvBuffer, buffer->cbBuffer);
               /* expire token. */
             buffer->cbBuffer = 0;
@@ -379,9 +449,9 @@ static void accept_token ( struct secure_channel * channel )
 static void accept_overflow ( struct secure_channel * channel )
 {
     ULONG i;
-    for ( i = 0; (i < channel->gbuffer.cBuffers); ++i )
+    for ( i = 0; (i < channel->dmbuffer.cBuffers); ++i )
     {
-        PSecBuffer buffer = &channel->gbuffer.pBuffers[i];
+        PSecBuffer buffer = &channel->dmbuffer.pBuffers[i];
         if ( buffer->BufferType == SECBUFFER_EXTRA )
         {
               /* forward data. */
@@ -406,9 +476,9 @@ static void accept_encrypted_message ( struct secure_channel * channel )
 {
     ULONG i;
       /* forward encrypted data. */
-    for ( i = 0; (i < channel->pbuffer.cBuffers); ++i )
+    for ( i = 0; (i < channel->embuffer.cBuffers); ++i )
     {
-        PSecBuffer buffer = &channel->pbuffer.pBuffers[i];
+        PSecBuffer buffer = &channel->embuffer.pBuffers[i];
         if ( buffer->BufferType != SECBUFFER_EMPTY )
         {
             channel->accept_encrypted(channel,
@@ -417,7 +487,7 @@ static void accept_encrypted_message ( struct secure_channel * channel )
         }
     }
       /* prepare for next message. */
-    reset_pstream_buffers(channel);
+    prepare_embuffer(channel);
 }
 
 /*!
@@ -435,9 +505,9 @@ static void accept_decrypted_message ( struct secure_channel * channel )
     void * extradata = 0;
     size_t extrasize = 0;
       /* forward decrypted data. */
-    for ( i = 0; (i < channel->gbuffer.cBuffers); ++i )
+    for ( i = 0; (i < channel->dmbuffer.cBuffers); ++i )
     {
-        PSecBuffer buffer = &channel->gbuffer.pBuffers[i];
+        PSecBuffer buffer = &channel->dmbuffer.pBuffers[i];
         if ( buffer->BufferType == SECBUFFER_DATA )
         {
             channel->accept_decrypted(channel,
@@ -451,21 +521,14 @@ static void accept_decrypted_message ( struct secure_channel * channel )
         }
     }
       /* prepare for next message. */
-    reset_pstream_buffers(channel);
+    prepare_dmbuffer(channel);
       /* schedule use of leftovers. */
     if ((extradata != 0) && (extrasize > 0))
     {
-        channel_copy(&channel->gbuffer.pBuffers[0],
+        channel_copy(&channel->embuffer.pBuffers[0],
             channel->stream_size, extradata, extrasize);
     }
 }
-
-/*
-** PROTOTYPES.
-*/
-
-static void secure_channel_decrypt
-    ( struct secure_channel * channel, PSecBufferDesc buffer );
 
 /*!
  * @brief Acquire security credentials.
@@ -581,7 +644,6 @@ static SECURITY_STATUS channel_apply
     SECURITY_STATUS result;
     SecBuffer token;
     SecBufferDesc buffer;
-      /* setup token buffer. */
     token.BufferType = SECBUFFER_TOKEN;//SECBUFFER_PKG_PARAMS;
     token.cbBuffer = size;
     token.pvBuffer = data;
@@ -664,7 +726,7 @@ static SECURITY_STATUS secure_channel_client_token
     if ((result == SEC_I_COMPLETE_NEEDED) ||
         (result == SEC_I_COMPLETE_AND_CONTINUE))
     {
-        result = CompleteAuthToken(&channel->handle, &channel->gbuffer);
+        result = CompleteAuthToken(&channel->handle, &channel->embuffer);
         if ( FAILED(result) )
         {
             printf("%s: CompleteAuthToken(): 0x%08x\n",
@@ -682,21 +744,15 @@ static SECURITY_STATUS secure_channel_client_token
 static void secure_channel_client_token_1 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* prepare query token. */
-    prepare_gtoken(channel);
-    
-      /* negotiate. */
+    prepare_otbuffer(channel);
     result = secure_channel_client_token(channel,
-        0, &channel->handle, 0, &channel->gbuffer, 0);
+        0, &channel->handle, 0, &channel->otbuffer, 0);
+      /* negotiation in progress. */
     if ( result == SEC_I_CONTINUE_NEEDED )
     {
         printf("Client: obtained context handle.\n");
-          /* forward query token. */
         accept_token(channel);
-          /* prepare reply token. */
-        prepare_ptoken(channel);
-          /* negotiation started. */
+        prepare_itbuffer(channel);
         channel->state = secure_channel_unsafe;
     }
 }
@@ -709,103 +765,76 @@ static void secure_channel_client_token_1 ( struct secure_channel * channel )
 static void secure_channel_client_token_2 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* avoid heavy call if we don't have any data. */
-    if ( channel->pbuffer.pBuffers[0].cbBuffer <= 0 ) {
+    if ( channel->itbuffer.pBuffers[0].cbBuffer <= 0 ) {
         return;
     }
-    
-      /* prepare buffers. */
-    prepare_gtoken(channel);
-    
-      /* negotiate. */
+    prepare_otbuffer(channel);
     result = secure_channel_client_token(channel,
-        &channel->handle, 0, &channel->pbuffer, &channel->gbuffer, 0);
-    if ( result == SEC_I_CONTINUE_NEEDED )
-    {
-        printf("Client: continue negotiation.\n");
-          /* forward query token. */
-        accept_token(channel);
-          /* prepare reply token. */
-        prepare_ptoken(channel);
-    }
+        &channel->handle, 0, &channel->itbuffer, &channel->otbuffer, 0);
+      /* server requested client certificate and we didn't send one. */
     if ( result == SEC_I_INCOMPLETE_CREDENTIALS )
     {
         printf("Client: credentials required!\n");
         channel->state = secure_channel_failed;
         channel->error = secure_channel_fail;
     }
-      /* negotiation complete. */
+      /* token produced */
+    if ( result == SEC_I_CONTINUE_NEEDED )
+    {
+        printf("Client: continue negotiation.\n");
+        accept_token(channel);
+        prepare_itbuffer(channel);
+    }
+      /* token produced, negotiation complete */
     if ( result == SEC_E_OK )
     {
         printf("Client: negotiation complete!\n");
-          /* forward query token. */
         accept_token(channel);
-          /* pre-allocate buffers. */
         secure_channel_fetch_sizes(channel);
-        //release_token_buffers(channel);
         acquire_stream_buffers(channel);
-          /* prepare message buffers. */
-        reset_pstream_buffers(channel);
-        reset_gstream_buffers(channel);
-          /* over and out! */
+        //release_token_buffers(channel);
         channel->state = secure_channel_secure;
-          /* edit reconnect status. */
         //channel_reconnect_status(channel);
+        channel->requested_renegotiation = 0;
     }
 }
 
 /*!
- * @brief Produce re-negotiation request token.
- *
+ * @brief Produce re-negotiation REQUEST token.
  * @ingroup client
  */
 static void secure_channel_client_token_0 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* prepare query token. */
-    prepare_gtoken(channel);
-    
-      /* negotiate. */
+    prepare_otbuffer(channel);
     result = secure_channel_client_token(channel,
-        &channel->handle, 0, 0, &channel->gbuffer, 0);
+        &channel->handle, 0, 0, &channel->otbuffer, 0);
+      /* token produced */
     if ( result == SEC_I_CONTINUE_NEEDED )
     {
-        printf("Client: continue negotiation.\n");
-          /* forward query token. */
+        printf("Client: re-negotiation requested.\n");
         accept_token(channel);
-          /* prepare reply token. */
-        prepare_ptoken(channel);
-          /* negotiation started. */
-        channel->state = secure_channel_unsafe;
+        prepare_itbuffer(channel);
+        channel->requested_renegotiation = 1;
     }
 }
 
 /*!
- * @brief Produce shutdown notification token.
- *
+ * @brief Produce re-negotiation token (different from REQUEST token).
  * @ingroup client
  */
-static void secure_channel_client_token_3 ( struct secure_channel * channel )
+static void secure_channel_client_token_4 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* prepare buffers. */
-    nullify_buffers(channel);
-    channel->gbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
-    channel->gbuffer.pBuffers[0].cbBuffer = channel->token_size;
-    channel->gbuffer.pBuffers[0].pvBuffer = channel->gtokens;
-    channel->gbuffer.cBuffers = 1;
-    
-      /* negotiate. */
+    prepare_otbuffer(channel);
     result = secure_channel_client_token(channel,
-        &channel->handle, 0, &channel->pbuffer, &channel->gbuffer, 0);
-      /* negotiation complete. */
-    if ( result == SEC_E_OK )
+        &channel->handle, 0, &channel->itbuffer, &channel->otbuffer, 0);
+      /* token produced. */
+    if ( result == SEC_I_CONTINUE_NEEDED )
     {
         accept_token(channel);
-        channel->state = secure_channel_expire;
+        prepare_itbuffer(channel);
+        channel->state = secure_channel_unsafe;
     }
 }
 
@@ -817,49 +846,34 @@ static void secure_channel_client_token_3 ( struct secure_channel * channel )
 static void secure_channel_client_token_5 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* prepare buffers. */
-    nullify_buffers(channel);
-    channel->gbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
-    channel->gbuffer.pBuffers[0].cbBuffer = channel->token_size;
-    channel->gbuffer.pBuffers[0].pvBuffer = channel->gtokens;
-    channel->gbuffer.cBuffers = 1;
-    
-      /* negotiate. */
+    prepare_ctbuffers(channel);
     result = secure_channel_client_token(channel,
-        &channel->handle, 0, &channel->pbuffer, &channel->gbuffer, 0);
-      /* negotiation complete. */
+        &channel->handle, 0, &channel->itbuffer, &channel->otbuffer, 0);
+      /* token produced. */
     if ( result == SEC_E_OK )
     {
+        printf("Client: alert token produced.\n");
         accept_token(channel);
     }
-    
-      /* restore buffers. */
-    reset_gstream_buffers(channel);
 }
 
 /*!
- * @brief Produce initial re-negotiation token.
+ * @brief Produce shutdown notification token.
+ *
  * @ingroup client
  */
-static void secure_channel_client_token_4 ( struct secure_channel * channel )
+static void secure_channel_client_token_3 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* prepare query token. */
-    prepare_gtoken(channel);
-    
-      /* negotiate. */
+    prepare_ctbuffers(channel);
     result = secure_channel_client_token(channel,
-        &channel->handle, 0, &channel->pbuffer, &channel->gbuffer, 0);
-    if ( result == SEC_I_CONTINUE_NEEDED )
+        &channel->handle, 0, &channel->itbuffer, &channel->otbuffer, 0);
+      /* token produced */
+    if ( result == SEC_E_OK )
     {
-          /* forward query token. */
+        printf("Client: shutdown has begun.\n");
         accept_token(channel);
-          /* prepare reply token. */
-        prepare_ptoken(channel);
-          /* negotiation started. */
-        channel->state = secure_channel_unsafe;
+        channel->state = secure_channel_expire;
     }
 }
 
@@ -929,26 +943,18 @@ static SECURITY_STATUS secure_channel_server_token
 static void secure_channel_server_token_1 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* avoid heavy call if we don't have any data. */
-    if ( channel->pbuffer.pBuffers[0].cbBuffer <= 0 ) {
+    if ( channel->itbuffer.pBuffers[0].cbBuffer <= 0 ) {
         return;
     }
-    
-      /* prepare buffers. */
-    prepare_gtoken(channel);
-    
-      /* negotiate. */
+    prepare_otbuffer(channel);
     result = secure_channel_server_token(channel,
-        0, &channel->handle, &channel->pbuffer, &channel->gbuffer);
+        0, &channel->handle, &channel->itbuffer, &channel->otbuffer);
+      /* token produced, continue negotiation. */
     if ( result == SEC_I_CONTINUE_NEEDED )
     {
         printf("Server: obtained context handle.\n");
-          /* forward query token. */
         accept_token(channel);
-          /* prepare reply token. */
-        prepare_ptoken(channel);
-          /* negotiation started. */
+        prepare_itbuffer(channel);
         channel->state = secure_channel_unsafe;
     }
 }
@@ -961,53 +967,36 @@ static void secure_channel_server_token_1 ( struct secure_channel * channel )
 static void secure_channel_server_token_2 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* avoid heavy call if we don't have any data. */
-    if ( channel->pbuffer.pBuffers[0].cbBuffer <= 0 ) {
+    if ( channel->itbuffer.pBuffers[0].cbBuffer <= 0 ) {
         return;
     }
-    
-      /* prepare buffers. */
-    prepare_gtoken(channel);
-    
-      /* negotiate. */
+    prepare_otbuffer(channel);
     result = secure_channel_server_token(channel,
-        &channel->handle, 0, &channel->pbuffer, &channel->gbuffer);
-      /* negotiation in progress. */
+        &channel->handle, 0, &channel->itbuffer, &channel->otbuffer);
+      /* token produced, continue negotiation. */
     if ( result == SEC_I_CONTINUE_NEEDED )
     {
         printf("Server: continue negotiation.\n");
-          /* forward query token. */
         accept_token(channel);
-          /* prepare reply token. */
-        prepare_ptoken(channel);
+        prepare_itbuffer(channel);
     }
       /* negotiation complete. */
     if ( result == SEC_E_OK )
     {
         printf("Server: negotiation complete!\n");
-          /* forward query token. */
         accept_token(channel);
-          /* pre-allocate buffers. */
         secure_channel_fetch_sizes(channel);
-        //release_token_buffers(channel);
         acquire_stream_buffers(channel);
-          /* prepare message buffers. */
-        reset_pstream_buffers(channel);
-        reset_gstream_buffers(channel);
-          /* over and out! */
+        //release_token_buffers(channel);
         channel->state = secure_channel_secure;
-          /* edit reconnect status. */
         //channel_reconnect_status(channel);
     }
       /* peer rejected renegotiation request. */
     if ( result == SEC_I_NO_RENEGOTIATION )
     {
         printf("Server: re-negotiation rejected!\n");
-        // put token in decrypt buffer.
-        // decrypt token.
-        secure_channel_decrypt(channel, &channel->pbuffer);
-        channel->state = secure_channel_secure;
+        channel->state = secure_channel_failed;
+        channel->error = secure_channel_fail;
     }
 }
 
@@ -1019,22 +1008,18 @@ static void secure_channel_server_token_2 ( struct secure_channel * channel )
 static void secure_channel_server_token_0 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* prepare query token. */
-    prepare_gtoken(channel);
-    
-      /* negotiate. */
+    prepare_ctbuffers(channel);
     result = secure_channel_server_token(channel,
-        &channel->handle, 0, 0, &channel->gbuffer);
+        &channel->handle, 0, 0, &channel->otbuffer);
+      /* token produced, expect token in return. */
     if ( result == SEC_E_OK )
     {
         printf("Server: requested re-negotiation.\n");
-          /* forward query token. */
         accept_token(channel);
-          /* prepare reply token. */
-        prepare_ptoken(channel);
-          /* negotiation started. */
-        //channel->state = secure_channel_unsafe;
+        prepare_itbuffer(channel);
+        /* NOTE: the client may have already encrypted one or messages, so the
+             channel must keep decrypting data until the peer actually responds
+             to the re-negotiation request. */
     }
 }
 
@@ -1046,18 +1031,10 @@ static void secure_channel_server_token_0 ( struct secure_channel * channel )
 static void secure_channel_server_token_3 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* prepare buffers. */
-    nullify_buffers(channel);
-    channel->gbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
-    channel->gbuffer.pBuffers[0].cbBuffer = channel->token_size;
-    channel->gbuffer.pBuffers[0].pvBuffer = channel->gtokens;
-    channel->gbuffer.cBuffers = 1;
-    
-      /* negotiate. */
+    prepare_ctbuffers(channel);
     result = secure_channel_server_token(channel,
-        &channel->handle, 0, &channel->pbuffer, &channel->gbuffer);
-      /* negotiation complete. */
+        &channel->handle, 0, &channel->itbuffer, &channel->otbuffer);
+      /* token produced. */
     if ( result == SEC_E_OK )
     {
         printf("Server: shutdown initiated.\n");
@@ -1074,20 +1051,13 @@ static void secure_channel_server_token_3 ( struct secure_channel * channel )
 static void secure_channel_server_token_5 ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    
-      /* prepare buffers. */
-    nullify_buffers(channel);
-    channel->gbuffer.pBuffers[0].BufferType = SECBUFFER_TOKEN;
-    channel->gbuffer.pBuffers[0].cbBuffer = channel->token_size;
-    channel->gbuffer.pBuffers[0].pvBuffer = channel->gtokens;
-    channel->gbuffer.cBuffers = 1;
-    
-      /* negotiate. */
+    prepare_ctbuffers(channel);
     result = secure_channel_server_token(channel,
-        &channel->handle, 0, &channel->pbuffer, &channel->gbuffer);
-      /* negotiation complete. */
+        &channel->handle, 0, &channel->itbuffer, &channel->otbuffer);
+      /* token produced. */
     if ( result == SEC_E_OK )
     {
+        printf("Server: alert token produced.\n");
         accept_token(channel);
     }
 }
@@ -1107,21 +1077,17 @@ static SECURITY_STATUS channel_alert
 {
     SECURITY_STATUS result;
     SCHANNEL_ALERT_TOKEN alert;
-      /* setup token. */
     alert.dwTokenType   = SCHANNEL_ALERT;
     alert.dwAlertType   = fatal? TLS1_ALERT_FATAL : TLS1_ALERT_WARNING;
     alert.dwAlertNumber = status;
-      /* apply token. */
     result = channel_apply(channel, &alert, sizeof(alert));
     if ( result == SEC_E_OK )
     {
         //acquire_token_buffers(channel);
-        if ( channel->role == secure_channel_client )
-        {
+        if ( channel->role == secure_channel_client ) {
             secure_channel_client_token_5(channel);
         }
-        if ( channel->role == secure_channel_server )
-        {
+        if ( channel->role == secure_channel_server ) {
             secure_channel_server_token_5(channel);
         }
     }
@@ -1141,13 +1107,9 @@ static void secure_channel_encrypt
     ( struct secure_channel * channel, PSecBufferDesc buffer )
 {
     SECURITY_STATUS result;
-    
-      /* avoid heavy call if buffer is empty. */
     if ( buffer->pBuffers[1].cbBuffer <= 0 ) {
         return;
     }
-    
-      /* attempt to encrypt an entire message. */
     result = EncryptMessage(&channel->handle, 0, buffer, 0);
     if ( FAILED(result) )
     {
@@ -1158,7 +1120,7 @@ static void secure_channel_encrypt
     }
       /* message encrypted, forward contents. */
     if ( result == SEC_E_OK ) {
-        printf("%s, Message encrypted.\n", channel_role(channel));
+        printf("%s, message encrypted.\n", channel_role(channel));
         accept_encrypted_message(channel);
     }
 }
@@ -1176,13 +1138,9 @@ static void secure_channel_decrypt
     ( struct secure_channel * channel, PSecBufferDesc buffer )
 {
     SECURITY_STATUS result;
-    
-      /* avoid heavy call if buffer is empty. */
     if ( buffer->pBuffers[0].cbBuffer <= 0 ) {
         return;
     }
-    
-      /* attempt to decrypt an entire message. */
     result = DecryptMessage(&channel->handle, buffer, 0, 0);
     if ( FAILED(result) )
     {
@@ -1191,7 +1149,7 @@ static void secure_channel_decrypt
             channel->need_push = 1;
             channel->need_pull = 0;
         }
-        if ( result != SEC_E_INCOMPLETE_MESSAGE )
+        else if ( result != SEC_E_INCOMPLETE_MESSAGE )
         {
             printf("%s: DecryptMessage(): 0x%08x\n",
                 channel_role(channel), result);
@@ -1199,7 +1157,7 @@ static void secure_channel_decrypt
             channel->error = secure_channel_fail;
         }
     }
-      /* context expired by peer. */
+      /* peer has shutdown channel. */
     if ( result == SEC_I_CONTEXT_EXPIRED )
     {
         printf("%s: peer requested shutdown.\n", channel_role(channel));
@@ -1207,27 +1165,45 @@ static void secure_channel_decrypt
         //            Check for decrypted data buffer of length 0.
           /**/
         //release_stream_buffers(channel);
-        acquire_token_buffers(channel);
-          /**/
+        //release_token_buffers(channel);
         channel->state = secure_channel_expire;
     }
-      /* return to negotiation loop. */
+      /* peer requested re-negotiation. */
     if ( result == SEC_I_RENEGOTIATE )
     {
         printf("%s: peer requested re-negotiation.\n", channel_role(channel));
         if ( channel->allow_renegotiation )
         {
             printf("  -- proceeding.\n");
-            accept_overflow(channel);
             channel->state = secure_channel_unsafe;
-            //release_stream_buffers(channel);
-            nullify_buffers(channel);
-            acquire_token_buffers(channel);
-            if ( channel->role == secure_channel_client ) {
-                secure_channel_client_token_4(channel);
+            accept_overflow(channel);
+            if ( channel->role == secure_channel_server )
+            {
+                prepare_itbuffer(channel);
+                channel_copy(&channel->itbuffer.pBuffers[0],
+                    channel->token_size,
+                    channel->dmbuffer.pBuffers[1].pvBuffer,
+                    channel->dmbuffer.pBuffers[1].cbBuffer);
+                secure_channel_server_token_2(channel);
             }
-            if ( channel->role == secure_channel_server ) {
-                prepare_ptoken(channel);
+            if ( channel->role == secure_channel_client )
+            {
+                  /* If the client requested re-negotiation, we've been
+                     decrypting pending messages while waiting for an OK from
+                     the server.  Thus, we've just received the server's reply
+                     to the negotiation request; proceed! */
+                if ( channel->requested_renegotiation )
+                {
+                    prepare_itbuffer(channel);
+                    channel_copy(&channel->itbuffer.pBuffers[0],
+                        channel->token_size,
+                        channel->dmbuffer.pBuffers[1].pvBuffer,
+                        channel->dmbuffer.pBuffers[1].cbBuffer);
+                    secure_channel_client_token_2(channel);
+                }
+                else {
+                    secure_channel_client_token_4(channel);
+                }
             }
         }
         else
@@ -1236,14 +1212,15 @@ static void secure_channel_decrypt
             channel_alert(channel, 0, TLS1_ALERT_NO_RENEGOTIATION);
         }
     }
-      /* message decrypted, forward contents. */
+      /* message decrypted. */
     if ( result == SEC_E_OK ) {
         printf("%s: Message decrypted.\n", channel_role(channel));
+        accept_overflow(channel);
         accept_decrypted_message(channel);
     }
 }
 
-void security_pacakge_setup ( struct security_package * package )
+void security_package_setup ( struct security_package * package )
 {
     SECURITY_STATUS result;
     PSecPkgInfoW description;
@@ -1264,19 +1241,25 @@ void secure_channel_clear ( struct secure_channel * channel )
     channel->error = secure_channel_good;
     channel->allow_reconnect     = 1;
     channel->allow_renegotiation = 1;
+    channel->itbuffer.ulVersion = SECBUFFER_VERSION;
+    channel->itbuffer.pBuffers = channel->buffers+0;
+    channel->itbuffer.cBuffers = 2;
+    channel->otbuffer.ulVersion = SECBUFFER_VERSION;
+    channel->otbuffer.pBuffers = channel->buffers+2;
+    channel->otbuffer.cBuffers = 2;
+    channel->embuffer.ulVersion = SECBUFFER_VERSION;
+    channel->embuffer.pBuffers = channel->buffers+4;
+    channel->embuffer.cBuffers = 4;
+    channel->dmbuffer.ulVersion = SECBUFFER_VERSION;
+    channel->dmbuffer.pBuffers = channel->buffers+8;
+    channel->dmbuffer.cBuffers = 4;
 }
 
 void secure_channel_setup ( const struct security_package * package,
     struct secure_channel * channel, enum secure_channel_role role )
 {
-      /* ensure channel is in the default state. */
-    if ( channel->state != secure_channel_virgin ) {
-        return;
-    }
-    
-      /* acquire context. */
+      /* acquire credentials. */
     channel->role = role;
-    channel->token_size = package->token_size;
     if ( channel->role == secure_channel_client )
     {
         secure_channel_client_setup
@@ -1287,64 +1270,49 @@ void secure_channel_setup ( const struct security_package * package,
         secure_channel_server_setup
             (&channel->credentials, &channel->certificate);
     }
-    
-      /* initialize get buffers. */
-    channel->gbuffer.ulVersion = SECBUFFER_VERSION;
-    channel->gbuffer.pBuffers = channel->buffers+0;
-    channel->gbuffer.cBuffers = 0;
-      /* initialize put buffers. */
-    channel->pbuffer.ulVersion = SECBUFFER_VERSION;
-    channel->pbuffer.pBuffers = channel->buffers+4;
-    channel->pbuffer.cBuffers = 0;
-    
       /* allocate token buffers for negotiation. */
+    channel->token_size = package->token_size;
     acquire_token_buffers(channel);
-    
       /* start negotiation. */
-    if ( channel->role == secure_channel_client )
-    {
+    if ( channel->role == secure_channel_client ) {
         secure_channel_client_token_1(channel);
-    
     }
-    if ( channel->role == secure_channel_server )
-    {
-        prepare_ptoken(channel);
+    if ( channel->role == secure_channel_server ) {
+        prepare_itbuffer(channel);
     }
 }
 
 size_t secure_channel_push
     ( struct secure_channel * channel, const char * data, size_t size )
 {
-      // feed channel until engine blocks or all data is processed.
+      /* feed channel until engine blocks or all data is processed. */
     size_t used = 0;
     while ((used < size) && (channel->error == secure_channel_good))
     {
-          // server starts negotiation on first client token.
+          /* server starts negotiation in response to client token. */
         if ( channel->state == secure_channel_virgin )
         {
-            used += channel_copy(&channel->pbuffer.pBuffers[0],
+            used += channel_copy(&channel->itbuffer.pBuffers[0],
                 channel->token_size, data+used, size-used);
             secure_channel_server_token_1(channel);
         }
-           // keep negotiating.
+           /* negotiation isn't quite finished, keep processing tokens. */
         if ( channel->state == secure_channel_unsafe )
         {
-            used += channel_copy(&channel->pbuffer.pBuffers[0],
+            used += channel_copy(&channel->itbuffer.pBuffers[0],
                 channel->token_size, data+used, size-used);
-            if ( channel->role == secure_channel_client )
-            {
+            if ( channel->role == secure_channel_client ) {
                 secure_channel_client_token_2(channel);
             }
-            if ( channel->role == secure_channel_server )
-            {
+            if ( channel->role == secure_channel_server ) {
                 secure_channel_server_token_2(channel);
             }
         }
-          // session is safe, start encrypting data!
+          /* session has been secured, encrypt data! */
         if ( channel->state == secure_channel_secure )
         {
-              /* prepare data for encryption. */
-            used += channel_copy(&channel->pbuffer.pBuffers[1],
+              /* prepare data only, wait for manual flush. */
+            used += channel_copy(&channel->embuffer.pBuffers[1],
                 channel->stream_size, data+used, size-used);
         }
     }
@@ -1358,24 +1326,22 @@ size_t secure_channel_pull
     size_t used = 0;
     while ((used < size) && (channel->error == secure_channel_good))
     {
-          // server starts negotiation on first client token.
+          /* server starts negotiation in response to client token. */
         if ( channel->state == secure_channel_virgin )
         {
-            used += channel_copy(&channel->pbuffer.pBuffers[0],
+            used += channel_copy(&channel->itbuffer.pBuffers[0],
                 channel->token_size, data+used, size-used);
             secure_channel_server_token_1(channel);
         }
-           // keep negotiating.
+           /* negotiation isn't quite finished, keep processing tokens. */
         if ( channel->state == secure_channel_unsafe )
         {
-            used += channel_copy(&channel->pbuffer.pBuffers[0],
+            used += channel_copy(&channel->itbuffer.pBuffers[0],
                 channel->token_size, data+used, size-used);
-            if ( channel->role == secure_channel_client )
-            {
+            if ( channel->role == secure_channel_client ) {
                 secure_channel_client_token_2(channel);
             }
-            if ( channel->role == secure_channel_server )
-            {
+            if ( channel->role == secure_channel_server ) {
                 secure_channel_server_token_2(channel);
             }
         }
@@ -1383,10 +1349,10 @@ size_t secure_channel_pull
         if ( channel->state == secure_channel_secure )
         {
               /* prepare data for decryption. */
-            used += channel_copy(&channel->gbuffer.pBuffers[0],
+            used += channel_copy(&channel->dmbuffer.pBuffers[0],
                 channel->stream_size, data+used, size-used);
               /* attempt to decrypt message. */
-            secure_channel_decrypt(channel, &channel->gbuffer);
+            secure_channel_decrypt(channel, &channel->dmbuffer);
         }
     }
     return (used);
@@ -1394,23 +1360,15 @@ size_t secure_channel_pull
 
 void secure_channel_flush ( struct secure_channel * channel )
 {
-    secure_channel_encrypt(channel, &channel->pbuffer);
+    secure_channel_encrypt(channel, &channel->embuffer);
 }
 
 void secure_channel_renegotiate ( struct secure_channel * channel )
 {
-    //channel->state = secure_channel_unsafe;
-    //
-    //release_stream_buffers(channel);
-    nullify_buffers(channel);
-    acquire_token_buffers(channel);
-    //
-    if ( channel->role == secure_channel_client )
-    {
+    if ( channel->role == secure_channel_client ) {
         secure_channel_client_token_0(channel);
     }
-    if ( channel->role == secure_channel_server )
-    {
+    if ( channel->role == secure_channel_server ) {
         secure_channel_server_token_0(channel);
     }
 }
@@ -1418,20 +1376,16 @@ void secure_channel_renegotiate ( struct secure_channel * channel )
 void secure_channel_close ( struct secure_channel * channel )
 {
     SECURITY_STATUS result;
-    DWORD token;
-      /* setup token. */
-    token = SCHANNEL_SHUTDOWN;
-      /* request token. */
+    DWORD token = SCHANNEL_SHUTDOWN;
     result = channel_apply(channel, &token, sizeof(token));
+      /* token queued internally. */
     if ( result == SEC_E_OK )
     {
-        acquire_token_buffers(channel);
-        if ( channel->role == secure_channel_client )
-        {
+          /* extract token. */
+        if ( channel->role == secure_channel_client ) {
             secure_channel_client_token_3(channel);
         }
-        if ( channel->role == secure_channel_server )
-        {
+        if ( channel->role == secure_channel_server ) {
             secure_channel_server_token_3(channel);
         }
     }

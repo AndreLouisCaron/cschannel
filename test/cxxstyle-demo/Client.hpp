@@ -18,7 +18,6 @@ namespace demo {
     public:
         Client ()
         {
-            myChannel.allow_renegotiation = 0;
             ::secure_channel_setup(
                 &myPackage, &myChannel, ::secure_channel_client);
         }

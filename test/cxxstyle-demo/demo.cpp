@@ -16,71 +16,107 @@ namespace {
 
 int main ( int, char ** )
 {
+      // negotiation.
+    std::cout
+        << "(1): negotiate" << std::endl
+        << "--------------" << std::endl;
     demo::Client client;
     demo::Server server;
-    
-      // negotiation.
-    client >> server, server >> client;
-    client >> server, server >> client;
-    std::cout << "-----" << std::endl;
+    do {
+        client >> server, server >> client;
+    }
+    while ( client.negotiating() || server.negotiating() );
+    std::cout << std::endl << std::endl << std::endl;
     
       // exchange.
-#if 0
+    std::cout
+        << "(2) client -> server" << std::endl
+        << "--------------------" << std::endl;
     client << "Hello, server!";
     client >> server;
     { std::string message;
         server >> message;
         std::cout << "Server: data='" << message << "'." << std::endl;
     }
-    std::cout << "-----" << std::endl;
-#endif
+    std::cout << std::endl << std::endl << std::endl;
+    
+      // exchange.
+    std::cout
+        << "(3) client <- server" << std::endl
+        << "--------------------" << std::endl;
+    server << "Hello, client!";
+    server >> client;
+    { std::string message;
+        client >> message;
+        std::cout << "Client: data='" << message << "'." << std::endl;
+    }
+    std::cout << std::endl << std::endl << std::endl;
     
       // re-negotiation.
-#if 0
+    std::cout
+        << "(4) client re-negotiation" << std::endl
+        << "-------------------------" << std::endl;
     client.renegotiate();
-    client >> server, server >> client;
-    client >> server, server >> client;
-    client >> server, server >> client;
-    std::cout << "-----" << std::endl;
+    server << "Hello, client!"; // simulate pending message.
+    server >> client;
+    { std::string message;
+        client >> message;
+        std::cout << "Client: data='" << message << "'." << std::endl;
+    }
+    do {
+        client >> server, server >> client;
+    }
+    while ( client.negotiating() || server.negotiating() );
+    std::cout << std::endl << std::endl << std::endl;
+    
       // exchange.
+    std::cout
+        << "(5) client <- server, double" << std::endl
+        << "----------------------------" << std::endl;
+    server << "Hello, client!";
     server << "Hello, client!";
     server >> client;
     { std::string message;
         client >> message;
         std::cout << "Client: data='" << message << "'." << std::endl;
     }
-    std::cout << "-----" << std::endl;
-#endif
+    std::cout << std::endl << std::endl << std::endl;
     
-      // re-negotiation.
+    // re-negotiation.
+    std::cout
+        << "(6) server re-negotiation" << std::endl
+        << "-------------------------" << std::endl;
     server.renegotiate();
-    server >> client;
-    client >> server, server >> client;
-    client >> server, server >> client;
-    std::cout << "-----" << std::endl;
-    
-      // exchange.
-    server << "Hello, client!";
-    server >> client;
-    { std::string message;
-        client >> message;
-        std::cout << "Client: data='" << message << "'." << std::endl;
-    }
-    std::cout << "-----" << std::endl;
-    
-      // exchange.
-#if 0
-    client << "Hello, server!";
+    client << "Hello, server!"; // simulate pending message.
     client >> server;
     { std::string message;
         server >> message;
         std::cout << "Server: data='" << message << "'." << std::endl;
     }
-    std::cout << "-----" << std::endl;
-#endif
+    do {
+        client >> server, server >> client;
+    }
+    while ( client.negotiating() || server.negotiating() );
+    std::cout << std::endl << std::endl << std::endl;
+    
+      // exchange.
+    std::cout
+        << "(7) client <- server" << std::endl
+        << "--------------------" << std::endl;
+    server << "Hello, client!";
+    server >> client;
+    { std::string message;
+        client >> message;
+        std::cout << "Client: data='" << message << "'." << std::endl;
+    }
+    std::cout << std::endl << std::endl << std::endl;
     
       // shutdown.
+    std::cout
+        << "(8) shutdown" << std::endl
+        << "------------" << std::endl;
     server.shutdown();
+    server >> client;
     server >> client;
 }
 

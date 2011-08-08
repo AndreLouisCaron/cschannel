@@ -36,7 +36,7 @@ namespace demo {
               myGBuffer(16*1024), myDBuffer(16*1024)
         {
               // Pre-initialize.
-            ::security_pacakge_setup(&myPackage);
+            ::security_package_setup(&myPackage);
             ::secure_channel_clear(&myChannel);
               // Settings.
             myChannel.allow_reconnect    = 0;
@@ -86,6 +86,11 @@ namespace demo {
 
         Peer& operator>> ( std::string& message )
         {
+            /*! TODO: loop to decrypt **all** received messages. */
+              // decrypt message.
+            myGBuffer.take(::secure_channel_pull(
+                &myChannel, myGBuffer.data(), myGBuffer.size()));
+              // extract decrypted messages.
             message.append(myDBuffer.begin(), myDBuffer.end());
             myDBuffer.take(myDBuffer.end());
             return (*this);

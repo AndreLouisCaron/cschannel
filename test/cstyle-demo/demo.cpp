@@ -88,7 +88,7 @@ int main ( int, char ** )
 {
       // basic initialization.
     ::security_package package;
-    ::security_pacakge_setup(&package);
+    ::security_package_setup(&package);
       // server-side channel.
     ::secure_channel server;
     ::secure_channel_clear(&server);

@@ -159,6 +159,12 @@ struct secure_channel
 
     /*!
      * @private
+     * @brief Set to 1 when renegotiation is requested.
+     */
+    int requested_renegotiation;
+
+    /*!
+     * @private
      * @brief Handle to opaque secure channel state.
      */
     CtxtHandle handle;
@@ -194,63 +200,77 @@ struct secure_channel
 
     /*!
      * @private
-     * @brief Buffer for in-bound negotiation token.
+     * @brief Buffer for in-bound negotiation token data.
      */
-    void * gtokens;
+    void * itoken;
 
     /*!
      * @private
-     * @brief Buffer for out-bound negotiation token.
+     * @brief Buffer for out-bound negotiation token data.
      */
-    void * ptokens;
+    void * otoken;
 
     /*!
      * @private
      * @brief Buffer for out-bound message header.
      * @invariant Points to 0 or an array of @c header_size bytes.
      */
-    void * pheader;
+    void * emheader;
 
     /*!
      * @private
      * @brief Buffer for out-bound message stream.
      * @invariant Points to 0 or an array of @c stream_size bytes.
      */
-    void * pstream;
+    void * emstream;
 
     /*!
      * @private
      * @brief Buffer for out-bound message footer.
      * @invariant Points to 0 or an array of @c footer_size bytes.
      */
-    void * pfooter;
+    void * emfooter;
 
     /*!
      * @private
      * @brief Buffer for in-bound message stream.
      * @invariant Points to 0 or an array of @c stream_size bytes.
      */
-    void * gstream;
+    void * dmstream;
 
     /*!
      * @private
      * @brief Buffers passed to security package.
      */
-    SecBuffer buffers[8];
+    SecBuffer buffers[12];
 
     /*!
      * @private
-     * @brief Buffer for in-bound data, passed to security package.
+     * @brief Buffer for in-bound token data (received from peer).
      * @invariant References entries in @c buffers.
      */
-    SecBufferDesc gbuffer;
+    SecBufferDesc itbuffer;
 
     /*!
      * @private
-     * @brief Buffer for out-bound data, passed to security package.
+     * @brief Buffer for out-bound token data (to be sent to peer).
      * @invariant References entries in @c buffers.
      */
-    SecBufferDesc pbuffer;
+    SecBufferDesc otbuffer;
+
+    /*!
+     * @private
+     * @brief Buffer for encrypting messages, passed to security package.
+     * @invariant References entries in @c buffers.
+     */
+    SecBufferDesc embuffer;
+
+    /*!
+     * @private
+     * @brief Buffer for decrypting messages, passed to security package.
+     * @invariant References entries in @c buffers.
+     */
+    SecBufferDesc dmbuffer;
 
     /// @}
 
@@ -336,7 +356,7 @@ struct secure_channel
  *
  * @note Call once and re-use for all channels.
  */
-void security_pacakge_setup ( struct security_package * package );
+void security_package_setup ( struct security_package * package );
 
 /*!
  * @brief Clear channel state and set default settings.
