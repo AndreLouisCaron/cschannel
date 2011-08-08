@@ -50,6 +50,13 @@ namespace demo {
 
         /* methods. */
     public:
+        bool negotiating () const
+        {
+            return (((myChannel.state == ::secure_channel_virgin) ||
+                     (myChannel.state == ::secure_channel_unsafe))
+                    && (myChannel.error == ::secure_channel_good));
+        }
+
         void process ()
         {
             myEBuffer.take(::secure_channel_push(
