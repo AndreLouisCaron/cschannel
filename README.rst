@@ -14,4 +14,15 @@ at being the most generalized interface possible to all forms of cryptographic
 channels, it is rather painful to use.  The ``cschannel`` project aims at making
 SChannel-enabled applications easier.
 
+Documentation
+=============
+
+The project uses `Doxygen`_ to publish API documentation.  Builds for key
+versions are available online:
+
+* `latest <http://andrelouiscaron.github.com/cschannel/latest/>`
+
+For other commits, run the ``doxygen`` command from the root of the source tree.
+
 .. _`facade`: http://en.wikipedia.org/wiki/Facade_pattern
+.. _`Doxygen`: http://www.stack.nl/~dimitri/doxygen/
