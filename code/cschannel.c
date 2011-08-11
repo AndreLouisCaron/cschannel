@@ -187,6 +187,8 @@ static const char * channel_role
 
 /*!
  * @brief Acquire memory used for buffering data.
+ * @param channel Secure channel instance for which to acquire memory.
+ * @param size Number of bytes of memory to acquire.
  *
  * @ingroup memory
  *
@@ -203,6 +205,8 @@ static void * channel_acquire ( struct secure_channel * channel, size_t size )
 
 /*!
  * @brief Release memory used for buffering data.
+ * @param channel Secure channel instance for which to release memory.
+ * @param data Pointer returned by @c channel_acquire()
  *
  * @ingroup memory
  *
@@ -223,6 +227,7 @@ static void channel_release ( struct secure_channel * channel, void * data )
 
 /*!
  * @brief Acquire memory used for buffering security tokens.
+ * @param channel Secure channel instance for which to acquire memory.
  *
  * @ingroup memory
  *
@@ -238,6 +243,7 @@ static void acquire_token_buffers ( struct secure_channel * channel )
 
 /*!
  * @brief Release memory used for buffering security tokens.
+ * @param channel Secure channel instance for which to release memory.
  *
  * @ingroup memory
  *
@@ -252,6 +258,7 @@ static void release_token_buffers ( struct secure_channel * channel )
 
 /*!
  * @brief Acquire memory used for buffering messages.
+ * @param channel Secure channel instance for which to acquire memory.
  *
  * @ingroup memory
  *
@@ -271,6 +278,7 @@ static void acquire_stream_buffers ( struct secure_channel * channel )
 
 /*!
  * @brief Release memory used for buffering messages.
+ * @param channel Secure channel instance for which to release memory.
  *
  * @ingroup memory
  *
@@ -287,6 +295,7 @@ static void release_stream_buffers ( struct secure_channel * channel )
 
 /*!
  * @brief Prepare get buffer for reception of negotiation token.
+ * @param channel Secure channel instance for which to prepare token buffers.
  *
  * @ingroup buffers
  *
@@ -315,6 +324,7 @@ static void prepare_itbuffer ( struct secure_channel * channel )
 
 /*!
  * @brief Prepare put buffer for reception of negotiation token.
+ * @param channel Secure channel instance for which to prepare token buffers.
  *
  * @ingroup buffers
  *
@@ -437,6 +447,7 @@ static void accept_token ( struct secure_channel * channel )
 
 /*!
  * @brief Forward leftover message parts using registered callbacks.
+ * @param channel Secure channel with unused data to return to the application.
  *
  * @ingroup callback
  *
@@ -465,6 +476,7 @@ static void accept_overflow ( struct secure_channel * channel )
 
 /*!
  * @brief Forward encrypted message content using registered callbacks.
+ * @param channel Secure channel for which a message was just encrypted.
  *
  * @ingroup callback
  *
@@ -492,6 +504,7 @@ static void accept_encrypted_message ( struct secure_channel * channel )
 
 /*!
  * @brief Forward decrypted message content using registered callbacks.
+ * @param channel Secure channel for which a message was just decrypted.
  *
  * @ingroup callback
  *
@@ -606,6 +619,7 @@ static void secure_channel_client_setup (
 
 /*!
  * @brief Request channel limits from security package.
+ * @param channel Channel for which buffer sizes are to be requested.
  *
  * @ingroup memory
  *
@@ -1064,6 +1078,9 @@ static void secure_channel_server_token_5 ( struct secure_channel * channel )
 
 /*!
  * @brief Trigger TLS alert.
+ * @param channel Secure channel instance for which to prepare alert token.
+ * @param fatal Set to 1 if the channel cannot recover from @a status.
+ * @param status TLS status code (reason for failure).
  *
  * @ingroup control
  *
@@ -1072,7 +1089,7 @@ static void secure_channel_server_token_5 ( struct secure_channel * channel )
  * @param status TLS status.
  * @pre channel->state == secure_channel_secure
  */
-static SECURITY_STATUS channel_alert
+static void channel_alert
     ( struct secure_channel * channel, int fatal, int status )
 {
     SECURITY_STATUS result;
@@ -1091,7 +1108,6 @@ static SECURITY_STATUS channel_alert
             secure_channel_server_token_5(channel);
         }
     }
-    return (result);
 }
 
 /*!

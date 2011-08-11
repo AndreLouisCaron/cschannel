@@ -347,6 +347,7 @@ struct secure_channel
 
 /*!
  * @brief Obtain information about the security package.
+ * @param package Security package description to fill in.
  *
  * @ingroup export
  *
@@ -360,6 +361,7 @@ void security_package_setup ( struct security_package * package );
 
 /*!
  * @brief Clear channel state and set default settings.
+ * @param channel Secure channel instance to clear.
  *
  * @ingroup export
  *
@@ -376,6 +378,10 @@ void secure_channel_clear ( struct secure_channel * channel );
 
 /*!
  * @brief Finish initialization and start negotiation.
+ * @param package Security package description.
+ * @param channel Security channel instance for which to start initialization.
+ * @param role Indicates whether the local host should initate negotiation or if
+ *  the remote peer is expected to.
  *
  * @ingroup export
  *
@@ -385,13 +391,25 @@ void secure_channel_clear ( struct secure_channel * channel );
  *
  * @see secure_channel_clear()
  */
-void secure_channel_setup
-    ( const struct security_package * pacakge, struct secure_channel * channel, enum secure_channel_role );
+void secure_channel_setup ( const struct security_package * package,
+    struct secure_channel * channel, enum secure_channel_role role );
 
 /*!
  * @brief Buffer message data for encryption (at a later time).
+ * @param channel Security channel used for encryption.
+ * @param data Pointer to first byte of data to encrypt.
+ * @param size Number of bytes, starting at @a data, to encrypt.
+ * @return Number of bytes consumed by the channel, in [0, @a size].
  *
  * @ingroup export
+ *
+ * Function used to process data before it is sent to the peer.  All data to
+ * exchange over the secured connection must be passed to this filter.
+ *
+ * This function does not encrypt data.  The application should invoke the
+ * @c secure_channel_flush method when a complete "message" is ready to be
+ * encrypted.  Whenever data is encrypted, the resulting message data is passed
+ * back to the application using the secure_channel::accept_encrypted callback.
  *
  * @see secure_channel_flush()
  */
@@ -400,14 +418,40 @@ size_t secure_channel_push
 
 /*!
  * @brief Attempt to message decryption.
+ * @param channel Security channel used for encryption.
+ * @param data Pointer to first byte of data to decrypt.
+ * @param size Number of bytes, starting at @a data, to decrypt.
+ * @return Number of bytes consumed by the channel, in [0, @a size].
  *
  * @ingroup export
+ *
+ * Function used to process data received from the peer, before it is used by
+ * the application.  All data to exchange over the secured connection must be
+ * passed to this filter.
+ *
+ * This function @e attempts to decrypt received data.  Because the secure
+ * channel is @e message-based and the transport mechanism is @e stream-based,
+ * it is possible to receive data in chunks smaller than the entire message.  In
+ * such a case, data is buffered and kept until further data is provided and the
+ * message is completely received.  Whenever data is decrypted, the resulting
+ * message data is passed back to the application using the
+ * secure_channel::accept_decrypted callback.
  */
 size_t secure_channel_pull
     ( struct secure_channel * channel, const char * data, size_t size );
 
 /*!
  * @brief Force any buffered data to be output.
+ * @param channel Secure channel instance for which to encrypt buffered data.
+ *
+ * The secure channel allows the application to provide message parts in
+ * multiple calls to the secure_channel_pull() function.  Because of this, the
+ * secure channel requires a call to this function to actually encrypt data.
+ *
+ * @note Depending on the security package limits (maximum message size) and
+ *  channel configuration, it is possible that a message be encrypted without
+ *  a call to this function.  However, to ensure that data has been encrypted,
+ *  this function a call!
  *
  * @ingroup export
  */
@@ -415,13 +459,40 @@ void secure_channel_flush ( struct secure_channel * channel );
 
 /*!
  * @brief Notify peer of intent to re-negotiate.
+ * @param channel Secure channel instance for which to request re-negotiation
  *
  * @ingroup export
+ *
+ * Re-negotiating the encryption keys is recommended after 1 Gigabyte or data
+ * has been exchanged, or 1 hour has elapsed since the last negotiation,
+ * whichever occurs first.  However, re-negotiation is optional, and the request
+ * may be denied by the peer.  Thus, the secure channel does not attempt to
+ * re-negotiate automatically and it is up to the application to request it if
+ * desired.
+ *
+ * @note Re-negotiation of the connection is always optional.  The peer may
+ *  decide not to acknowledge the request.  Also, the peer may continue to
+ *  encrypt data until it ptocesses the renegotiation request.  Because of these
+ *  two limitations, the secure channel cannot determine if the peer ever
+ *  processes the renegotiation request.
  */
 void secure_channel_renegotiate ( struct secure_channel * channel );
 
 /*!
  * @brief Initiate shutdown.
+ * @param channel Secure channel instance to close.
+ *
+ * A call to this function produces a token that notifies the peer of the intent
+ * to shutdown the connection.
+ *
+ * @todo Figure out if the local channel can still decrypt data.
+ *
+ * @note Unlike network sockets, the secure channel does not support unilateral
+ *  shutdown.  Moreover, the channel might need to re-negotiate at the peer's
+ *  request, even if the application is only receiving data.  Therefore,
+ *  applications should be careful not to request a shutdown until all data is
+ *  exchanged, and to keep the socket open even if a one-way socket shutdown is
+ *  possible.
  *
  * @ingroup export
  */
