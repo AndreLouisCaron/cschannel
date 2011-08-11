@@ -20,7 +20,7 @@ Documentation
 The project uses `Doxygen`_ to publish API documentation.  Builds for key
 versions are available online:
 
-* `latest <http://andrelouiscaron.github.com/cschannel/latest/>`
+* `latest <http://andrelouiscaron.github.com/cschannel/latest/>`_
 
 For other commits, run the ``doxygen`` command from the root of the source tree.
 
