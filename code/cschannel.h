@@ -8,6 +8,82 @@
 ** this software package (see "license.txt").  If not, the license is available
 ** online at "http://www.opensource.org/licenses/mit-license". */
 
+/*!
+ * @mainpage Streaming secure channel in C.
+ *
+ * This project wraps the horrible Microsoft Security Support Provider Interface
+ * (SSPI) API for use with the Microsoft Secure Channel, a TLS/SSL
+ * implementation.  The API is somewhat difficult to use correctly and requires
+ * much experimentation and testing.
+ *
+ * The project aims at providing a TLS/SSL implementation which is:
+ *
+ * @li @b convenient: integration in existing applications requires a minimal
+ *  amount of code
+ * @li @b reliable: the implementation is already debugged and supports a wide
+ *  variety of situations, including corner cases
+ * @li @b compatible: the implementation does not impose a network model and is
+ *  compatible with any communucation transport providing reliable, ordered
+ *  delivery of a stream of bytes.
+ *
+ * <b>Table of contents:</b>
+ *
+ * @li @ref license
+ * @li @ref motivation
+ * @li @ref design
+ *
+ * @section license Software license
+ *
+ * The software is released under an Open Source Initiative (OSI) approved
+ * licence (MIT) with maximal compatibility with your business model, be it open
+ * or closed source.
+ *
+ * The software is Copyright(c) Andre Caron, 2009-2011:
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * @section motivation Motivation
+ *
+ * Microsoft's TLS/SSL implementation, Secure Channel (SChannel) is exposed
+ * through the Microsoft Security Support Provider Interface (SSPI) API.  This
+ * API is designed to be very generic and is therefore very complicated to use;
+ * applications look like they're using a generic encryption mechanism, rather
+ * than a TLS/SSL implementation.
+ *
+ * All in all, the API is difficult to use, and documentation is not very
+ * helpful as far as corner cases are concerned.  Examples in the Platform SDK
+ * only demonstrate simple cases and leave difficult corner cases as "an
+ * exercise for the reader".
+ *
+ * This project provides a simple facade for this Secure Channel beast as a
+ * standalone library with no other dependencies.  It is suitable for use in a
+ * wide range of use cases and should be easily pluggable into any application.
+ *
+ * @section design Design
+ *
+ * The implementation is based on a finite state machine, which is interruptible
+ * at (almost) any moment.  It does no I/O on its own and thus does not block on
+ * networking operations, making it suitable for use in high-performance
+ * networking applications based on asynchronous I/O (using I/O completion
+ * ports, for example).
+ */
+
 /* standard library. */
 #include <stddef.h>
 
